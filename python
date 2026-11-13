@@ -1,0 +1,154 @@
+import cv2
+import mediapipe as mp
+import numpy as np
+import time
+from collections import deque
+
+# ==========================
+# FALL DETECTION AI SYSTEM
+# ==========================
+
+mp_pose = mp.solutions.pose
+mp_draw = mp.solutions.drawing_utils
+
+pose = mp_pose.Pose(
+    min_detection_confidence=0.6,
+    min_tracking_confidence=0.6
+)
+
+camera = cv2.VideoCapture(0)
+
+history = deque(maxlen=20)
+fall_start = None
+alert_cooldown = 0
+
+def calculate_angle(a, b):
+    dx = b[0] - a[0]
+    dy = b[1] - a[1]
+
+    return abs(np.degrees(np.arctan2(dy, dx)))
+
+def analyze_pose(landmarks):
+    # Shoulder coordinates
+    ls = landmarks[11]
+    rs = landmarks[12]
+
+    # Hip coordinates
+    lh = landmarks[23]
+    rh = landmarks[24]
+
+    shoulder_x = (ls.x + rs.x) / 2
+    shoulder_y = (ls.y + rs.y) / 2
+
+    hip_x = (lh.x + rh.x) / 2
+    hip_y = (lh.y + rh.y) / 2
+
+    angle = calculate_angle(
+        (shoulder_x, shoulder_y),
+        (hip_x, hip_y)
+    )
+
+    # Torso vertical displacement
+    torso_height = abs(hip_y - shoulder_y)
+
+    return angle, torso_height
+
+def detect_fall(angle, height):
+    global fall_start
+
+    history.append((angle, height))
+
+    # Sudden posture change
+    if len(history) < 5:
+        return False
+
+    previous_angle = history[-5][0]
+    angle_change = abs(angle - previous_angle)
+
+    # Heuristic indicators, not a trained classifier
+    suspicious = (
+        angle > 60 and
+        height < 0.12 and
+        angle_change > 20
+    )
+
+    if suspicious:
+        if fall_start is None:
+            fall_start = time.time()
+
+        if time.time() - fall_start > 1.0:
+            return True
+    else:
+        fall_start = None
+
+    return False
+
+while camera.isOpened():
+
+    success, frame = camera.read()
+
+    if not success:
+        break
+
+    frame = cv2.flip(frame, 1)
+
+    rgb = cv2.cvtColor(
+        frame, cv2.COLOR_BGR2RGB
+    )
+
+    result = pose.process(rgb)
+
+    status = "NORMAL"
+    color = (0, 255, 0)
+
+    if result.pose_landmarks:
+
+        mp_draw.draw_landmarks(
+            frame,
+            result.pose_landmarks,
+            mp_pose.POSE_CONNECTIONS
+        )
+
+        landmarks = result.pose_landmarks.landmark
+
+        angle, height = analyze_pose(landmarks)
+
+        if detect_fall(angle, height):
+            status = "FALL SUSPECTED!"
+            color = (0, 0, 255)
+
+        cv2.putText(
+            frame,
+            f"Tilt: {angle:.1f}",
+            (20, 80),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (255, 255, 0),
+            2
+        )
+
+    else:
+        status = "PERSON NOT DETECTED"
+        color = (0, 165, 255)
+
+    cv2.putText(
+        frame,
+        status,
+        (20, 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.9,
+        color,
+        2
+    )
+
+    cv2.imshow(
+        "AI FALL DETECTION SYSTEM",
+        frame
+    )
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+camera.release()
+pose.close()
+cv2.destroyAllWindows()
