@@ -1,0 +1,162 @@
+
+import cv2
+import mediapipe as mp
+import numpy as np
+from collections import deque
+
+# ==============================
+# BALANCE MONITORING AI
+# ==============================
+
+mp_pose = mp.solutions.pose
+mp_draw = mp.solutions.drawing_utils
+
+pose = mp_pose.Pose(
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.7
+)
+
+cap = cv2.VideoCapture(0)
+
+balance_history = deque(maxlen=30)
+
+
+def get_center(landmarks, ids):
+
+    points = []
+
+    for i in ids:
+        p = landmarks[i]
+
+        if p.visibility > 0.5:
+            points.append([p.x, p.y])
+
+    if len(points) < 2:
+        return None
+
+    return np.mean(points, axis=0)
+
+
+def calculate_balance(landmarks):
+
+    shoulders = get_center(
+        landmarks, [11, 12]
+    )
+
+    hips = get_center(
+        landmarks, [23, 24]
+    )
+
+    ankles = get_center(
+        landmarks, [27, 28]
+    )
+
+    if any(x is None for x in
+           [shoulders, hips, ankles]):
+        return None
+
+    # Torso alignment
+    torso_dx = abs(
+        shoulders[0] - hips[0]
+    )
+
+    # Hip and ankle alignment
+    body_dx = abs(
+        hips[0] - ankles[0]
+    )
+
+    # Combined geometric indicator
+    score = (
+        torso_dx * 60 +
+        body_dx * 40
+    )
+
+    return score
+
+
+while cap.isOpened():
+
+    ret, frame = cap.read()
+
+    if not ret:
+        break
+
+    frame = cv2.flip(frame, 1)
+
+    rgb = cv2.cvtColor(
+        frame,
+        cv2.COLOR_BGR2RGB
+    )
+
+    results = pose.process(rgb)
+
+    status = "BALANCE NORMAL"
+    color = (0, 255, 0)
+
+    if results.pose_landmarks:
+
+        landmarks = (
+            results.pose_landmarks.landmark
+        )
+
+        mp_draw.draw_landmarks(
+            frame,
+            results.pose_landmarks,
+            mp_pose.POSE_CONNECTIONS
+        )
+
+        score = calculate_balance(
+            landmarks
+        )
+
+        if score is not None:
+
+            balance_history.append(score)
+
+            average = np.mean(
+                balance_history
+            )
+
+            if average > 0.08:
+                status = "UNSTABLE POSTURE"
+                color = (0, 0, 255)
+
+            elif average > 0.04:
+                status = "CAUTION"
+                color = (0, 165, 255)
+
+            cv2.putText(
+                frame,
+                f"Balance Index: {average:.3f}",
+                (20, 80),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 0),
+                2
+            )
+
+    else:
+        status = "NO PERSON"
+        color = (150, 150, 150)
+
+    cv2.putText(
+        frame,
+        status,
+        (20, 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        color,
+        2
+    )
+
+    cv2.imshow(
+        "AI BALANCE MONITOR",
+        frame
+    )
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+pose.close()
+cv2.destroyAllWindows()
