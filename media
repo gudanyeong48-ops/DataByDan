@@ -1,0 +1,24 @@
+import cv2
+import mediapipe as mp
+
+mp_pose = mp.solutions.pose
+pose = mp_pose.Pose()
+
+cap = cv2.VideoCapture("fall_test.mp4")
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = pose.process(rgb)
+
+    if results.pose_landmarks:
+        for landmark in results.pose_landmarks.landmark:
+            x = landmark.x
+            y = landmark.y
+            print(x, y)
+
+cap.release()
+cv2.destroyAllWindows()
